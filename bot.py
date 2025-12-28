@@ -1,8 +1,9 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 import hashlib
+import os
+TOKEN = os.getenv("TOKEN")
 
-TOKEN = "8398833039:AAFX4xezoTiU4NYAh9a2R2LfRBnm9Ns6324"
 
 # storage
 seen_messages = {}
@@ -63,4 +64,5 @@ app.add_handler(CommandHandler("report", report))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 app.run_polling()
+
 
