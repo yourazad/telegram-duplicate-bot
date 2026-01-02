@@ -6,97 +6,80 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-import hashlib
 import os
 
-# TOKEN from Railway / Environment Variable
 TOKEN = os.getenv("TOKEN")
 
-# storage
-seen_messages = {}
-deleted_messages = []
-
-def get_hash(message):
-    if message.text:
-        return hashlib.md5(message.text.encode()).hexdigest()
-
-    if message.photo:
-        return message.photo[-1].file_unique_id
-
-    if message.video:
-        return message.video.file_unique_id
-
-    if message.document:
-        return message.document.file_unique_id
-
-    if message.audio:
-        return message.audio.file_unique_id
-
-    return None
+# per-group storage
+seen_media = {}          # {chat_id: set(file_unique_id)}
+text_count = {}          # {chat_id: int}
+media_count = {}         # {chat_id: int}
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    msg = update.message
+    if not msg:
         return
 
-    chat_id = update.message.chat_id
-    msg_hash = get_hash(update.message)
+    chat_id = msg.chat_id
 
-    if not msg_hash:
-        return
+    # init group data
+    seen_media.setdefault(chat_id, set())
+    text_count.setdefault(chat_id, 0)
+    media_count.setdefault(chat_id, 0)
 
-    if chat_id not in seen_messages:
-        seen_messages[chat_id] = set()
-
-    if msg_hash in seen_messages[chat_id]:
+    # ❌ TEXT → DELETE
+    if msg.text:
         try:
-            await update.message.delete()
-            deleted_messages.append(
-                update.message.text
-                or update.message.caption
-                or "Media/File"
-            )
+            await msg.delete()
+            text_count[chat_id] += 1
+        except:
+            pass
+        return
+
+    # ✅ MEDIA
+    media_id = None
+
+    if msg.photo:
+        media_id = msg.photo[-1].file_unique_id
+    elif msg.video:
+        media_id = msg.video.file_unique_id
+    elif msg.document:
+        media_id = msg.document.file_unique_id
+    elif msg.audio:
+        media_id = msg.audio.file_unique_id
+    else:
+        return
+
+    # ❌ DUPLICATE MEDIA → DELETE
+    if media_id in seen_media[chat_id]:
+        try:
+            await msg.delete()
+            media_count[chat_id] += 1
         except:
             pass
     else:
-        seen_messages[chat_id].add(msg_hash)
+        seen_media[chat_id].add(media_id)
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not deleted_messages:
-        await update.message.reply_text(
-            "✅ Koi duplicate message delete nahi hua."
-        )
-        return
+    chat_id = update.message.chat_id
 
-    msg = "📊 Duplicate Delete Report\n\n"
-    msg += f"🗑 Total Deleted: {len(deleted_messages)}\n\n"
-    msg += "📌 Deleted Messages:\n"
+    t = text_count.get(chat_id, 0)
+    m = media_count.get(chat_id, 0)
 
-    for i, text in enumerate(deleted_messages, 1):
-        msg += f"{i}. {text}\n"
-
-    await update.message.reply_text(msg)
-
-    # reset after report
-    deleted_messages.clear()
-    seen_messages.clear()
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Duplicate Cleaner Bot Active!\n\n"
-        "• Text / Photo / Video / File duplicate auto delete honge\n"
-        "• Final report ke liye /report likho"
+        f"📊 Group Delete Report\n\n"
+        f"✍️ Text deleted: {t}\n"
+        f"📁 Duplicate media deleted: {m}"
     )
 
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("report", report))
-    app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
     app.run_polling()
 
