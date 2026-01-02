@@ -1,92 +1,89 @@
+import os
+import hashlib
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     CommandHandler,
     ContextTypes,
-    filters
+    filters,
 )
-import os
-import hashlib
 
 TOKEN = os.getenv("TOKEN")
 
 # storage
 seen_media = set()
-text_deleted_count = 0
-media_deleted_count = 0
+deleted_count = 0
 
 
-def media_hash(message):
-    if message.photo:
-        return message.photo[-1].file_unique_id
-    if message.video:
-        return message.video.file_unique_id
-    if message.document:
-        return message.document.file_unique_id
-    return None
+def media_hash(file_id: str) -> str:
+    return hashlib.md5(file_id.encode()).hexdigest()
 
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global text_deleted_count
-    try:
-        await update.message.delete()
-        text_deleted_count += 1
-    except:
-        pass
-
-
-async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global media_deleted_count
-
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global deleted_count
     msg = update.message
-    media_id = media_hash(msg)
 
-    if not media_id:
+    if not msg:
         return
 
-    if media_id in seen_media:
+    # ✅ ALLOWED: photo, video, gif(animation)
+    allowed = msg.photo or msg.video or msg.animation
+
+    # ❌ DELETE everything else
+    if not allowed:
         try:
             await msg.delete()
-            media_deleted_count += 1
+        except:
+            pass
+        return
+
+    # 🔍 find file_id
+    file_id = None
+    if msg.photo:
+        file_id = msg.photo[-1].file_id
+    elif msg.video:
+        file_id = msg.video.file_id
+    elif msg.animation:
+        file_id = msg.animation.file_id
+
+    if not file_id:
+        return
+
+    h = media_hash(file_id)
+
+    # ❌ duplicate media delete
+    if h in seen_media:
+        try:
+            await msg.delete()
+            deleted_count += 1
         except:
             pass
     else:
-        seen_media.add(media_id)
+        seen_media.add(h)
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "📊 **Delete Report**\n\n"
-        f"🗑 Text deleted: {text_deleted_count}\n"
-        f"🖼 Duplicate media deleted: {media_deleted_count}"
+    await update.message.reply_text(
+        f"📊 Duplicate Media Report\n\n"
+        f"🗑 Total duplicate media deleted: {deleted_count}"
     )
-    await update.message.reply_text(msg)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Bot Active\n\n"
-        "✔ Text auto delete\n"
-        "✔ Duplicate media delete\n"
-        "📊 /report for count"
+        "🤖 Media Filter Bot Active\n\n"
+        "✅ Allowed: Photo | Video | GIF\n"
+        "❌ Deleted: Text, Music, Sticker, Emoji, File\n"
+        "🗑 Duplicate media auto delete\n\n"
+        "📊 /report for deleted count"
     )
 
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-# delete ONLY text messages (no captions)
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-# handle media (photo, video, document)
-app.add_handler(
-    MessageHandler(
-        filters.PHOTO | filters.VIDEO | filters.Document.ALL,
-        handle_media
-    )
-)
-
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("report", report))
+app.add_handler(MessageHandler(filters.ALL, handle_message))
 
 app.run_polling()
