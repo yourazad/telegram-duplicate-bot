@@ -1,5 +1,6 @@
 import os
 import hashlib
+from moviepy.editor import VideoFileClip
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -18,6 +19,13 @@ deleted_count = 0
 
 def media_hash(file_id: str) -> str:
     return hashlib.md5(file_id.encode()).hexdigest()
+
+
+def extract_thumbnail(video_path: str, thumb_path: str):
+    clip = VideoFileClip(video_path)
+    t = int(clip.duration // 2) if clip.duration > 2 else 1
+    clip.save_frame(thumb_path, t=t)
+    clip.close()
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,8 +67,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             deleted_count += 1
         except:
             pass
+        return
     else:
         seen_media.add(h)
+
+    # 🎯 VIDEO THUMBNAIL FIX (ONLY IF THUMB MISSING)
+    if msg.video and not msg.video.thumbnail:
+        try:
+            video_file = await msg.video.get_file()
+            video_path = "video.mp4"
+            thumb_path = "thumb.jpg"
+
+            await video_file.download_to_drive(video_path)
+            extract_thumbnail(video_path, thumb_path)
+
+            await msg.delete()
+
+            with open(video_path, "rb") as v, open(thumb_path, "rb") as t:
+                await context.bot.send_video(
+                    chat_id=msg.chat_id,
+                    video=v,
+                    thumb=t,
+                    caption=msg.caption
+                )
+
+            os.remove(video_path)
+            os.remove(thumb_path)
+
+        except Exception as e:
+            print("Thumbnail error:", e)
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,7 +110,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 Media Filter Bot Active\n\n"
         "✅ Allowed: Photo | Video | GIF\n"
         "❌ Deleted: Text, Music, Sticker, Emoji, File\n"
-        "🗑 Duplicate media auto delete\n\n"
+        "🗑 Duplicate media auto delete\n"
+        "🖼 Video thumbnail auto-fix\n\n"
         "📊 /report for deleted count"
     )
 
