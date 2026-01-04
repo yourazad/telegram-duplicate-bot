@@ -10,24 +10,27 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("TOKEN")  # or paste token directly
 
-# storage
+# ---------------- STORAGE ----------------
 seen_media = set()
 deleted_count = 0
 
 
+# ---------------- HASH ----------------
 def media_hash(file_id: str) -> str:
     return hashlib.md5(file_id.encode()).hexdigest()
 
 
+# ---------------- THUMB EXTRACT ----------------
 def extract_thumbnail(video_path: str, thumb_path: str):
     clip = VideoFileClip(video_path)
-    t = int(clip.duration // 2) if clip.duration > 2 else 1
+    t = int(clip.duration // 2) if clip.duration and clip.duration > 2 else 1
     clip.save_frame(thumb_path, t=t)
     clip.close()
 
 
+# ---------------- MAIN HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global deleted_count
     msg = update.message
@@ -35,10 +38,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    # ✅ ALLOWED: photo, video, gif(animation)
+    # ✅ ALLOWED MEDIA
     allowed = msg.photo or msg.video or msg.animation
 
-    # ❌ DELETE everything else
+    # ❌ DELETE NON-MEDIA
     if not allowed:
         try:
             await msg.delete()
@@ -46,7 +49,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # 🔍 find file_id
+    # 🔍 FILE ID
     file_id = None
     if msg.photo:
         file_id = msg.photo[-1].file_id
@@ -60,7 +63,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     h = media_hash(file_id)
 
-    # ❌ duplicate media delete
+    # ❌ DUPLICATE DELETE
     if h in seen_media:
         try:
             await msg.delete()
@@ -71,16 +74,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         seen_media.add(h)
 
-    # 🎯 VIDEO THUMBNAIL FIX (ONLY IF THUMB MISSING)
-    if msg.video and not msg.video.thumbnail:
+    # 🎯 VIDEO THUMB FIX (ONLY IF MISSING)
+    if msg.video and not msg.video.thumbs:
         try:
             video_file = await msg.video.get_file()
-            video_path = "video.mp4"
-            thumb_path = "thumb.jpg"
+
+            video_path = f"video_{msg.message_id}.mp4"
+            thumb_path = f"thumb_{msg.message_id}.jpg"
 
             await video_file.download_to_drive(video_path)
             extract_thumbnail(video_path, thumb_path)
 
+            # delete original blank-thumb video
             await msg.delete()
 
             with open(video_path, "rb") as v, open(thumb_path, "rb") as t:
@@ -95,7 +100,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(thumb_path)
 
         except Exception as e:
-            print("Thumbnail error:", e)
+            print("THUMB ERROR:", e)
+
+
+# ---------------- COMMANDS ----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Duplicate Media Remover Bot Active\n\n"
+        "✅ Allowed: Photo | Video | GIF\n"
+        "❌ Deleted: Text | Audio | Sticker | File\n"
+        "🗑 Duplicate media auto delete\n"
+        "🖼 HQ video thumbnail auto-fix\n\n"
+        "📊 Use /report"
+    )
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,17 +122,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Media Filter Bot Active\n\n"
-        "✅ Allowed: Photo | Video | GIF\n"
-        "❌ Deleted: Text, Music, Sticker, Emoji, File\n"
-        "🗑 Duplicate media auto delete\n"
-        "🖼 Video thumbnail auto-fix\n\n"
-        "📊 /report for deleted count"
-    )
-
-
+# ---------------- START BOT ----------------
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
