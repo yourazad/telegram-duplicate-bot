@@ -14,6 +14,9 @@ TOKEN = os.getenv("TOKEN")
 seen_media = set()
 deleted_count = 0
 
+# 👇 bot ke resend ko protect karne ke liye
+bot_resending = set()
+
 
 def media_hash(file_id: str) -> str:
     return hashlib.md5(file_id.encode()).hexdigest()
@@ -36,7 +39,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # get file_id
+    # 🔍 file_id
     if msg.photo:
         file_id = msg.photo[-1].file_id
     elif msg.video:
@@ -48,28 +51,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     h = media_hash(file_id)
 
-    # ❌ duplicate delete
-    if h in seen_media:
+    # ❌ duplicate delete (but NOT bot resend)
+    if h in seen_media and h not in bot_resending:
         try:
             await msg.delete()
             deleted_count += 1
         except:
             pass
         return
-    else:
-        seen_media.add(h)
 
-    # 🖼 FIX BLANK THUMBNAIL (NO FFMPEG)
+    # first time seen
+    seen_media.add(h)
+
+    # 🎯 BLANK THUMB FIX
     if msg.video and not msg.video.thumbs:
         try:
-            await msg.delete()
+            # mark resend protection
+            bot_resending.add(h)
 
+            # resend with Telegram processing (thumbnail auto)
             await context.bot.send_video(
                 chat_id=msg.chat_id,
                 video=msg.video.file_id,
                 caption=msg.caption,
                 supports_streaming=True
             )
+
+            # delete original blank-thumb video
+            await msg.delete()
+
+            # cleanup flag
+            bot_resending.discard(h)
+
         except Exception as e:
             print("Thumbnail resend error:", e)
 
@@ -80,7 +93,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Photo | Video | GIF allowed\n"
         "❌ Text | Audio | Sticker deleted\n"
         "🗑 Duplicate media auto delete\n"
-        "🖼 HQ video thumbnail auto-fix\n\n"
+        "🖼 Blank thumbnail auto-fix\n\n"
         "📊 /report"
     )
 
